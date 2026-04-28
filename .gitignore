@@ -1,0 +1,15 @@
+# Nix build artifacts
+result
+result-*
+
+# Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Just in case — never commit private keys
+*.key
+id_rsa
+id_ed25519
+*.pem
