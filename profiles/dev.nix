@@ -3,9 +3,10 @@
   # Docker
   virtualisation.docker.enable = true;
 
-  # Caddy web server / reverse proxy
-  services.caddy.enable = true;
-  networking.firewall.allowedTCPPorts = [ 80 443 ];
+  # No edge service and no inbound 80/443 here (ADR 0022 D4 Layer 3): ingress
+  # is declared via services.cortex.ingressMode, which derives the firewall
+  # and runs the right edge (Caddy/cloudflared) itself. A dev box without the
+  # stack enabled exposes SSH + Tailscale only.
 
   environment.systemPackages = with pkgs; [
     # Go
