@@ -14,53 +14,58 @@
 # Firewall ports are DERIVED from the mode so OS and app cannot drift
 # (ADR 0022 D4 Layer 3).
 #
-# Secrets ride agenix encrypted to the host key (ADR 0009 rail). The two
-# UNRECOVERABLE secrets are delivered to the containers as MOUNTED FILES, off
-# the environment (ADR 0022 D6.3) — so `docker inspect` / `/proc/<pid>/environ`
-# can't read the master key; only the file mount holds it:
-#   secrets/cortex-master-key.age      — RAW master-key value → mounted at
-#                                        /run/secrets/cortex_master_key,
-#                                        CORTEX_MASTER_KEY_FILE points there.
-#   secrets/cortex-backup-password.age — RAW restic password value → mounted,
-#                                        CORTEX_BACKUP_PASSWORD_FILE points there.
-#   secrets/cortex-env.age             — the rest of the bootstrap env (DB host/
-#                                        name/user, OPERATORS, SECRET_KEY_BASE, DB
-#                                        passwords, BACKUP_REPOSITORY/S3_*…), still
-#                                        sourced via EnvironmentFile. DB passwords +
-#                                        SECRET_KEY_BASE move to files next, once
-#                                        each has a *_FILE reader.
+# Secrets ride agenix encrypted to the host key (ADR 0009 rail). Every secret the
+# app/backup containers read is delivered as a MOUNTED FILE, off the environment
+# (ADR 0022 D6.3) — so `docker inspect` / `/proc/<pid>/environ` can't read the
+# master key; only the file mount holds it. Each file holds ONLY the RAW value
+# (no KEY= prefix):
+#   secrets/cortex-master-key.age      → CORTEX_MASTER_KEY_FILE
+#   secrets/cortex-secret-key-base.age → CORTEX_SECRET_KEY_BASE_FILE
+#   secrets/cortex-db-app-password.age → CORTEX_DB_APP_PASSWORD_FILE
+#   secrets/cortex-backup-password.age → CORTEX_BACKUP_PASSWORD_FILE (restic)
+#   secrets/cortex-env.age             — the rest of the bootstrap env, KEY=value
+#                                        (DB host/name/user, the OWNER
+#                                        CORTEX_DB_PASSWORD — pg_dump's PGPASSWORD,
+#                                        no _FILE — OPERATORS, BACKUP_REPOSITORY/
+#                                        S3_*…), EnvironmentFile-sourced.
 #   secrets/cortex-tunnel-token.age    — TUNNEL_TOKEN=… (tunnel mode only)
 #
-# The RAW-value files (cortex-master-key, cortex-backup-password) hold ONLY the
-# secret value (no KEY= prefix), since they are mounted as files, not sourced.
 # Create them with `agenix -e secrets/cortex-master-key.age` etc. after
 # registering the host key in secrets.nix; the declarations below are gated on
 # `enable`, so the flake stays buildable for hosts that don't run the stack.
 let
   cfg = config.services.cortex;
 
-  # ADR 0022 D6.3 — the two UNRECOVERABLE secrets (master key + restic password)
-  # are delivered to the containers as MOUNTED FILES, never the environment, via
-  # a generated compose override layered on top of the base files. The base still
-  # passes `CORTEX_MASTER_KEY=${...:-}` (empty now that it's out of cortex-env),
-  # and `Cortex.Env` prefers the `*_FILE` form; `backup.sh` reads
-  # `CORTEX_BACKUP_PASSWORD_FILE`. The DB passwords + SECRET_KEY_BASE follow this
-  # identical pattern once each has a `*_FILE` reader (a later slice) — they stay
-  # in cortex-env for now.
+  # ADR 0022 D6.3 — every secret the app/backup containers read is delivered as a
+  # MOUNTED FILE, never the environment, via a generated compose override layered
+  # on top of the base files. The base still passes `CORTEX_X=${...:-}` (empty now
+  # that they're out of cortex-env), and `Cortex.Env` / `backup.sh` prefer the
+  # `*_FILE` form. The lone holdout is the OWNER DB password (CORTEX_DB_PASSWORD):
+  # the backup's `pg_dump` reads it as libpq's `PGPASSWORD` (no `_FILE` form — that
+  # needs a `.pgpass`), so it stays in cortex-env until that slice lands.
+
+  # The app + migrate containers both evaluate runtime.exs, so both get the
+  # app-read secrets (db_app_password is only consumed in server mode, harmless on
+  # migrate). The backup container needs only the restic password.
+  appBlock = {
+    secrets = [ "cortex_master_key" "cortex_secret_key_base" "cortex_db_app_password" ];
+    environment = {
+      CORTEX_MASTER_KEY_FILE = "/run/secrets/cortex_master_key";
+      CORTEX_SECRET_KEY_BASE_FILE = "/run/secrets/cortex_secret_key_base";
+      CORTEX_DB_APP_PASSWORD_FILE = "/run/secrets/cortex_db_app_password";
+    };
+  };
+
   secretsOverride = pkgs.writeText "cortex-secrets.yml" (builtins.toJSON {
     secrets = {
       cortex_master_key.file = config.age.secrets.cortex-master-key.path;
+      cortex_secret_key_base.file = config.age.secrets.cortex-secret-key-base.path;
+      cortex_db_app_password.file = config.age.secrets.cortex-db-app-password.path;
       cortex_backup_password.file = config.age.secrets.cortex-backup-password.path;
     };
     services = {
-      migrate = {
-        secrets = [ "cortex_master_key" ];
-        environment.CORTEX_MASTER_KEY_FILE = "/run/secrets/cortex_master_key";
-      };
-      app = {
-        secrets = [ "cortex_master_key" ];
-        environment.CORTEX_MASTER_KEY_FILE = "/run/secrets/cortex_master_key";
-      };
+      migrate = appBlock;
+      app = appBlock;
       backup = {
         secrets = [ "cortex_backup_password" ];
         environment.CORTEX_BACKUP_PASSWORD_FILE = "/run/secrets/cortex_backup_password";
@@ -154,10 +159,21 @@ in
           owner = "cortex";
           mode = "0400";
         };
-        # ADR 0022 D6.3 — the two unrecoverable secrets, decrypted to their own
-        # tmpfs files (mounted into the containers, never sourced into the env).
+        # ADR 0022 D6.3 — every app/backup-read secret decrypted to its own tmpfs
+        # file (mounted into the containers, never sourced into the env). Only the
+        # owner DB password stays in cortex-env (pg_dump's PGPASSWORD has no _FILE).
         cortex-master-key = {
           file = ../../secrets/cortex-master-key.age;
+          owner = "cortex";
+          mode = "0400";
+        };
+        cortex-secret-key-base = {
+          file = ../../secrets/cortex-secret-key-base.age;
+          owner = "cortex";
+          mode = "0400";
+        };
+        cortex-db-app-password = {
+          file = ../../secrets/cortex-db-app-password.age;
           owner = "cortex";
           mode = "0400";
         };

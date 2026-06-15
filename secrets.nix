@@ -9,20 +9,25 @@ let
 in
 {
   # The Cortex stack (modules/cortex) — created when a host enables it:
-  #   cortex-env.age             = the bootstrap env `cortex init` emits MINUS the
-  #                                two secrets below (CORTEX_DB_*, CORTEX_OPERATORS,
-  #                                CORTEX_SECRET_KEY_BASE, BACKUP_REPOSITORY/S3_*…).
-  #   cortex-master-key.age      = the RAW master-key value (ADR 0009), delivered
-  #                                as a MOUNTED FILE not the environment (ADR 0022
-  #                                D6.3) → CORTEX_MASTER_KEY_FILE in the container.
-  #   cortex-backup-password.age = the RAW restic password value, same rail →
-  #                                CORTEX_BACKUP_PASSWORD_FILE.
+  # Each of these holds ONLY a RAW secret value (no KEY= prefix) and is delivered
+  # to the containers as a MOUNTED FILE, off the environment (ADR 0022 D6.3):
+  #   cortex-master-key.age      → CORTEX_MASTER_KEY_FILE
+  #   cortex-secret-key-base.age → CORTEX_SECRET_KEY_BASE_FILE
+  #   cortex-db-app-password.age → CORTEX_DB_APP_PASSWORD_FILE
+  #   cortex-backup-password.age → CORTEX_BACKUP_PASSWORD_FILE
+  #   cortex-env.age             = the rest of the bootstrap env, KEY=value form
+  #                                (CORTEX_DB_HOST/NAME/USER, the OWNER
+  #                                CORTEX_DB_PASSWORD — pg_dump needs it as
+  #                                PGPASSWORD, no _FILE — CORTEX_OPERATORS,
+  #                                BACKUP_REPOSITORY/S3_*…). EnvironmentFile-sourced.
   #   cortex-tunnel-token.age    = TUNNEL_TOKEN=… (tunnel ingress mode only)
   #
   # Backing up THIS REPO + the operator age key off-box covers both unrecoverable
   # secrets (master key + restic password; ADR 0024 D3).
   "secrets/cortex-env.age".publicKeys = allKeys;
   "secrets/cortex-master-key.age".publicKeys = allKeys;
+  "secrets/cortex-secret-key-base.age".publicKeys = allKeys;
+  "secrets/cortex-db-app-password.age".publicKeys = allKeys;
   "secrets/cortex-backup-password.age".publicKeys = allKeys;
   "secrets/cortex-tunnel-token.age".publicKeys = allKeys;
 
