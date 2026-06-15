@@ -14,29 +14,69 @@
 # Firewall ports are DERIVED from the mode so OS and app cannot drift
 # (ADR 0022 D4 Layer 3).
 #
-# Secrets ride agenix encrypted to the host key (ADR 0009 rail):
-#   secrets/cortex-env.age          — the full bootstrap env, exactly the .env
-#                                     `cortex init` emits (CORTEX_MASTER_KEY,
-#                                     CORTEX_SECRET_KEY_BASE, CORTEX_OPERATORS,
-#                                     DB passwords, CORTEX_BACKUP_*…). Backing
-#                                     up this repo + the operator age key
-#                                     off-box covers BOTH unrecoverable
-#                                     secrets (master key + restic password).
-#   secrets/cortex-tunnel-token.age — TUNNEL_TOKEN=… (tunnel mode only)
+# Secrets ride agenix encrypted to the host key (ADR 0009 rail). The two
+# UNRECOVERABLE secrets are delivered to the containers as MOUNTED FILES, off
+# the environment (ADR 0022 D6.3) — so `docker inspect` / `/proc/<pid>/environ`
+# can't read the master key; only the file mount holds it:
+#   secrets/cortex-master-key.age      — RAW master-key value → mounted at
+#                                        /run/secrets/cortex_master_key,
+#                                        CORTEX_MASTER_KEY_FILE points there.
+#   secrets/cortex-backup-password.age — RAW restic password value → mounted,
+#                                        CORTEX_BACKUP_PASSWORD_FILE points there.
+#   secrets/cortex-env.age             — the rest of the bootstrap env (DB host/
+#                                        name/user, OPERATORS, SECRET_KEY_BASE, DB
+#                                        passwords, BACKUP_REPOSITORY/S3_*…), still
+#                                        sourced via EnvironmentFile. DB passwords +
+#                                        SECRET_KEY_BASE move to files next, once
+#                                        each has a *_FILE reader.
+#   secrets/cortex-tunnel-token.age    — TUNNEL_TOKEN=… (tunnel mode only)
 #
-# Create them with `agenix -e secrets/cortex-env.age` after registering the
-# host key in secrets.nix; the declarations below are gated on `enable`, so
-# the flake stays buildable for hosts that don't run the stack.
+# The RAW-value files (cortex-master-key, cortex-backup-password) hold ONLY the
+# secret value (no KEY= prefix), since they are mounted as files, not sourced.
+# Create them with `agenix -e secrets/cortex-master-key.age` etc. after
+# registering the host key in secrets.nix; the declarations below are gated on
+# `enable`, so the flake stays buildable for hosts that don't run the stack.
 let
   cfg = config.services.cortex;
+
+  # ADR 0022 D6.3 — the two UNRECOVERABLE secrets (master key + restic password)
+  # are delivered to the containers as MOUNTED FILES, never the environment, via
+  # a generated compose override layered on top of the base files. The base still
+  # passes `CORTEX_MASTER_KEY=${...:-}` (empty now that it's out of cortex-env),
+  # and `Cortex.Env` prefers the `*_FILE` form; `backup.sh` reads
+  # `CORTEX_BACKUP_PASSWORD_FILE`. The DB passwords + SECRET_KEY_BASE follow this
+  # identical pattern once each has a `*_FILE` reader (a later slice) — they stay
+  # in cortex-env for now.
+  secretsOverride = pkgs.writeText "cortex-secrets.yml" (builtins.toJSON {
+    secrets = {
+      cortex_master_key.file = config.age.secrets.cortex-master-key.path;
+      cortex_backup_password.file = config.age.secrets.cortex-backup-password.path;
+    };
+    services = {
+      migrate = {
+        secrets = [ "cortex_master_key" ];
+        environment.CORTEX_MASTER_KEY_FILE = "/run/secrets/cortex_master_key";
+      };
+      app = {
+        secrets = [ "cortex_master_key" ];
+        environment.CORTEX_MASTER_KEY_FILE = "/run/secrets/cortex_master_key";
+      };
+      backup = {
+        secrets = [ "cortex_backup_password" ];
+        environment.CORTEX_BACKUP_PASSWORD_FILE = "/run/secrets/cortex_backup_password";
+      };
+    };
+  });
 
   # The base compose file publishes NO app ports (ADR 0022 D4 Layer 2). Host
   # edges (Caddy/cloudflared) and local mode reach the app through the
   # loopback-only override the cortex repo ships for exactly this; `edge`
-  # mode's publication belongs to the operator's own override.
+  # mode's publication belongs to the operator's own override. The secrets
+  # override goes last so its file-mounts + `*_FILE` env land on top.
   composeFiles =
     [ "docker-compose.yml" ]
-    ++ lib.optional (cfg.ingressMode != "edge") "docker-compose.local.yml";
+    ++ lib.optional (cfg.ingressMode != "edge") "docker-compose.local.yml"
+    ++ [ secretsOverride ];
 
   compose =
     "${pkgs.docker-compose}/bin/docker-compose "
@@ -111,6 +151,18 @@ in
       {
         cortex-env = {
           file = ../../secrets/cortex-env.age;
+          owner = "cortex";
+          mode = "0400";
+        };
+        # ADR 0022 D6.3 — the two unrecoverable secrets, decrypted to their own
+        # tmpfs files (mounted into the containers, never sourced into the env).
+        cortex-master-key = {
+          file = ../../secrets/cortex-master-key.age;
+          owner = "cortex";
+          mode = "0400";
+        };
+        cortex-backup-password = {
+          file = ../../secrets/cortex-backup-password.age;
           owner = "cortex";
           mode = "0400";
         };
