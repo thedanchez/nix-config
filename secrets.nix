@@ -7,7 +7,7 @@ let
 
   # ash-prod-1's host key is generated locally before install and passed to
   # nixos-anywhere with --extra-files, so secrets can be encrypted to it first.
-  ash-prod-1 = "REPLACE_WITH_ASH_PROD_1_HOST_KEY";
+  ash-prod-1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJMBDKhVpZBPLgp8udpQz5OThTXvTSJrD5LpHGSPrZHf";
 
   allKeys = [ dan fsn-dev-1 ];
   civicviewKeys = [ dan ash-prod-1 ];
