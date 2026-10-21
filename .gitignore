@@ -13,3 +13,5 @@ result-*
 id_rsa
 id_ed25519
 *.pem
+# Claude Code local settings (can hold pasted tokens)
+.claude/settings.local.json

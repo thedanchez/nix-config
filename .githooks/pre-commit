@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Public repo: refuse commits whose staged changes contain secrets.
+# Enable once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+exec nix run nixpkgs#gitleaks -- git --staged --redact --no-banner

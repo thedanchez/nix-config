@@ -5,7 +5,12 @@ let
   # Host keys (can decrypt secrets on the server)
   fsn-dev-1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILYeGGRYhr4LG2i1G/iQeHgzb9rgIb5U6NImZuwalrPT";
 
+  # ash-prod-1's host key is generated locally before install and passed to
+  # nixos-anywhere with --extra-files, so secrets can be encrypted to it first.
+  ash-prod-1 = "REPLACE_WITH_ASH_PROD_1_HOST_KEY";
+
   allKeys = [ dan fsn-dev-1 ];
+  civicviewKeys = [ dan ash-prod-1 ];
 in
 {
   # The Cortex stack (modules/cortex) — created when a host enables it:
@@ -28,4 +33,12 @@ in
   "secrets/agent-github-token.age".publicKeys = allKeys;
   "secrets/anthropic-api-key.age".publicKeys = allKeys;
   "secrets/phx-secret-key-base.age".publicKeys = allKeys;
+
+  # The Civic View stack (modules/civicview).
+  "secrets/civicview-env.age".publicKeys = civicviewKeys;
+  "secrets/civicview-deploy-key.age".publicKeys = civicviewKeys;
+  "secrets/civicview-restic-env.age".publicKeys = civicviewKeys;
+  "secrets/civicview-restic-repository.age".publicKeys = civicviewKeys;
+  "secrets/civicview-restic-password.age".publicKeys = civicviewKeys;
+  "secrets/civicview-caddy-env.age".publicKeys = civicviewKeys;
 }

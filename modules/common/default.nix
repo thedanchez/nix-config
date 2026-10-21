@@ -6,5 +6,7 @@
     # The Cortex stack module (options only until a host sets
     # services.cortex.enable — fsn-dev-1 doesn't run the stack yet).
     ../cortex
+    # Civic View (options only until a host sets services.civicview.enable).
+    ../civicview
   ];
 }
