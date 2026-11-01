@@ -9,19 +9,9 @@
   # Root never logs in directly on a prod box — dan has sudo via wheel.
   services.openssh.settings.PermitRootLogin = lib.mkForce "no";
 
-  # The store can't grow unbounded on a small VPS.
-  nix.gc = {
-    automatic = true;
-    dates = "weekly";
-    options = "--delete-older-than 30d";
-  };
-  nix.optimise.automatic = true;
-
-  # Journald + docker logs are the whole observability budget on a single
-  # box (ADR 0022) — cap them so they can't eat the disk the database needs.
-  services.journald.extraConfig = ''
-    SystemMaxUse=1G
-  '';
+  # Journald and the store are capped for every box in base.nix; docker logs
+  # are the rest of the observability budget here (ADR 0022) — cap them so
+  # they can't eat the disk the database needs.
   virtualisation.docker.daemon.settings = {
     "log-driver" = "json-file";
     "log-opts" = {

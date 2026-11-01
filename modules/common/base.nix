@@ -55,6 +55,18 @@
   # published exploit. Off for the host's namespace; new sockets fall back to TCP.
   boot.kernel.sysctl."net.mptcp.enabled" = 0;
 
+  # The store and the journal can't grow unbounded on a small VPS: fsn-dev-1
+  # filled its 38 GB disk (18 system generations, no GC) by November 2026.
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 30d";
+  };
+  nix.optimise.automatic = true;
+  services.journald.extraConfig = ''
+    SystemMaxUse=1G
+  '';
+
   # Use flakes (already in your nix install but good to declare)
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 }
