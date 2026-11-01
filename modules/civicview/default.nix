@@ -1,5 +1,5 @@
 { lib, pkgs, config, ... }:
-# The Civic View stack: app + Postgres (`docker-compose.prod.yml`) run from a
+# The Civic View stack: app + Postgres + the converter service (`docker-compose.prod.yml`) run from a
 # checkout of thedanchez/civicview at `stackDir`, Caddy in front on the
 # tailnet only, and a nightly pg_dump → restic → R2 backup.
 #
@@ -16,6 +16,13 @@
 #   secrets/civicview-caddy-env.age         CIVICVIEW_HOST=<MagicDNS name> — kept out
 #                                           of this public repo; Caddy expands
 #                                           {$CIVICVIEW_HOST} at startup
+#   secrets/civicview-alert-smtp.age        (monitoring) a Resend API key that can
+#                                           send — Alertmanager's SMTP password (raw)
+#
+# With `monitoring.enable`, the stack adds docker-compose.monitoring.yml:
+# Prometheus, Alertmanager (alerts emailed through Resend) and Grafana, all on
+# 127.0.0.1 (Grafana: ssh -L 3000:localhost:3000; GRAFANA_ADMIN_PASSWORD in
+# the env file).
 #
 # Operating it (as dan, via sudo):
 #   sudo systemctl start civicview-deploy     pull main, build, migrate, restart
@@ -27,6 +34,10 @@ let
   envFile = config.age.secrets.civicview-env.path;
   dumpDir = "/var/backup/civicview";
 
+  composeFiles = lib.concatMapStringsSep " " (f: "-f ${f}") (
+    [ "docker-compose.prod.yml" ] ++ lib.optional cfg.monitoring.enable "docker-compose.monitoring.yml"
+  );
+
   # docker compose with the app env loaded (compose interpolates
   # POSTGRES_PASSWORD from it) and a fixed project name, so container names
   # (civicview-db-1, …) don't depend on the checkout's directory.
@@ -37,9 +48,10 @@ let
       set -a
       # shellcheck disable=SC1091
       . ${envFile}
+      ${lib.optionalString cfg.monitoring.enable "ALERTMANAGER_SMTP_PASSWORD_FILE=${config.age.secrets.civicview-alert-smtp.path}"}
       set +a
       cd ${cfg.stackDir}
-      exec docker-compose -p civicview -f docker-compose.prod.yml "$@"
+      exec docker-compose -p civicview ${composeFiles} "$@"
     '';
   };
 
@@ -66,7 +78,7 @@ let
       cd ${cfg.stackDir}
       git pull --ff-only origin ${cfg.branch}
       git log --oneline -1
-      civicview-compose build civicview
+      civicview-compose build civicview converter
       civicview-compose up -d --wait db
       civicview-compose run --rm civicview bin/migrate
       civicview-compose up -d --wait
@@ -92,6 +104,8 @@ in
       default = "/var/lib/civicview/civicview";
       description = "Checkout of the civicview repo; docker-compose.prod.yml is the deployable artifact.";
     };
+
+    monitoring.enable = lib.mkEnableOption "Prometheus, Alertmanager and Grafana (docker-compose.monitoring.yml)";
 
     backup = {
       enable = lib.mkOption {
@@ -132,6 +146,13 @@ in
         mode = "0400";
       };
       civicview-caddy-env.file = ../../secrets/civicview-caddy-env.age;
+    } // lib.optionalAttrs cfg.monitoring.enable {
+      # Bind-mounted into the Alertmanager container, which runs as nobody.
+      civicview-alert-smtp = {
+        file = ../../secrets/civicview-alert-smtp.age;
+        owner = "nobody";
+        mode = "0400";
+      };
     } // lib.optionalAttrs cfg.backup.enable {
       civicview-restic-env.file = ../../secrets/civicview-restic-env.age;
       civicview-restic-repository.file = ../../secrets/civicview-restic-repository.age;
@@ -190,8 +211,17 @@ in
     systemd.services.caddy.serviceConfig.EnvironmentFile = config.age.secrets.civicview-caddy-env.path;
     services.caddy = {
       enable = true;
-      virtualHosts."{$CIVICVIEW_HOST}".logFormat = "output file /var/log/caddy/access-civicview.log";
+      # Caddy redacts Authorization itself; the API's X-Api-Key it would log.
+      virtualHosts."{$CIVICVIEW_HOST}".logFormat = ''
+        output file /var/log/caddy/access-civicview.log
+        format filter {
+          request>headers>X-Api-Key delete
+        }
+      '';
       virtualHosts."{$CIVICVIEW_HOST}".extraConfig = ''
+        # A verification link's path carries its token (a credential)
+        log_skip /verify-email/*
+
         reverse_proxy 127.0.0.1:4000 {
           # LiveView websockets + long-poll
           flush_interval -1

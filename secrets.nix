@@ -41,4 +41,5 @@ in
   "secrets/civicview-restic-repository.age".publicKeys = civicviewKeys;
   "secrets/civicview-restic-password.age".publicKeys = civicviewKeys;
   "secrets/civicview-caddy-env.age".publicKeys = civicviewKeys;
+  "secrets/civicview-alert-smtp.age".publicKeys = civicviewKeys;
 }
