@@ -21,10 +21,20 @@
     })
     nodejs_24
 
-    # Elixir / Erlang: Elixir 1.20 on OTP 29, what the projects pin (mise).
-    # From stable nixpkgs, which carries both and gets security backports.
+    # Elixir / Erlang: the latest, Elixir 1.20 on OTP 29 (the projects pin
+    # them with mise). OTP 29.1.2 from stable nixpkgs; Elixir pinned to 1.20.5
+    # (security fixes: CVE-2026-109821, CVE-2026-115274, CVE-2026-97209) until
+    # nixpkgs ships it (26.05 has 1.20.4) — then drop the override.
     beam.packages.erlang_29.erlang
-    beam.packages.erlang_29.elixir_1_20
+    (beam.packages.erlang_29.elixir_1_20.overrideAttrs {
+      version = "1.20.5";
+      src = fetchFromGitHub {
+        owner = "elixir-lang";
+        repo = "elixir";
+        rev = "v1.20.5";
+        hash = "sha256-MsRNaWAQ05ysL3hOqpfhm//tRNL0Z4Ia/NfEWEQfEWE=";
+      };
+    })
 
     # Python
     python3
