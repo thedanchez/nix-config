@@ -70,9 +70,24 @@ let
     '';
   };
 
+  # With monitoring, before the app restarts: Prometheus restarts to load the
+  # checkout's alert rules (docker/prometheus/alert_rules.yml; it has no
+  # reload endpoint enabled), and CivicViewRestarted is silenced for its
+  # 15-minute window, since a deploy restarts the app on purpose: the alert
+  # speaks only for restarts nobody asked for.
+  beforeAppRestart = lib.optionalString cfg.monitoring.enable ''
+    civicview-compose restart prometheus
+    starts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    ends=$(date -u -d "+20 minutes" +%Y-%m-%dT%H:%M:%SZ)
+    curl -fsS -o /dev/null -H 'content-type: application/json' \
+      -X POST http://127.0.0.1:9093/api/v2/silences \
+      -d "{\"matchers\":[{\"name\":\"alertname\",\"value\":\"CivicViewRestarted\",\"isRegex\":false,\"isEqual\":true}],\"startsAt\":\"$starts\",\"endsAt\":\"$ends\",\"createdBy\":\"civicview-deploy\",\"comment\":\"deploy restarts the app\"}" \
+      || echo "warning: could not silence CivicViewRestarted; expect its email"
+  '';
+
   deploy = pkgs.writeShellApplication {
     name = "civicview-deploy";
-    runtimeInputs = [ pkgs.git civicviewCompose ];
+    runtimeInputs = [ pkgs.git pkgs.curl pkgs.coreutils civicviewCompose ];
     text = ''
       export GIT_SSH_COMMAND="${gitSsh}"
       cd ${cfg.stackDir}
@@ -81,6 +96,7 @@ let
       civicview-compose build civicview converter
       civicview-compose up -d --wait db
       civicview-compose run --rm civicview bin/migrate
+      ${beforeAppRestart}
       civicview-compose up -d --wait
     '';
   };
