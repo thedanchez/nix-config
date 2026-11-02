@@ -10,6 +10,7 @@
   networking.hostName = "ash-prod-1";
 
   services.civicview.enable = true;
+  services.civicview.monitoring.enable = true;
 
   system.stateVersion = "25.11";
 }
