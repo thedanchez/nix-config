@@ -48,7 +48,7 @@ let
       set -a
       # shellcheck disable=SC1091
       . ${envFile}
-      ${lib.optionalString cfg.monitoring.enable "ALERTMANAGER_SMTP_PASSWORD_FILE=${config.age.secrets.civicview-alert-smtp.path}"}
+      ${lib.optionalString cfg.monitoring.enable "export ALERTMANAGER_SMTP_PASSWORD_FILE=${config.age.secrets.civicview-alert-smtp.path}"}
       set +a
       cd ${cfg.stackDir}
       exec docker-compose -p civicview ${composeFiles} "$@"
